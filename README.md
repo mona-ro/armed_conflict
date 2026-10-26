@@ -10,13 +10,6 @@ This repository contains the CHL5233H: Statistical Programming and Computation i
 - `EDA/` — Exploratory data analysis report and source file
 - `reports/` — Dataset comparison report and other Quarto reports
 
-## Exploratory Data Analysis
-
-- [View the EDA report](EDA/eda.html)
-- [View the EDA source code](EDA/eda.qmd)
-
-The EDA explores dataset dimensions, missing values, the distribution of armed conflict, and changes in conflict-affected country-years over time.
-
 ## Analysis
 
 The analysis combines country-year data on:
