@@ -7,8 +7,7 @@ This repository contains the CHL5233H: Statistical Programming and Computation i
 - `data/raw/` — Original mortality, conflict, disaster, and covariate data
 - `data/processed/` — Final merged analytical dataset
 - `R/` — R scripts used to prepare the analytical dataset
-- `EDA/` — Exploratory data analysis report and source file
-- `reports/` — Dataset comparison report and other Quarto reports
+- `reports/` — Exploratory data analysis and dataset comparison reports, including Quarto source files and rendered HTML reports
 
 ## Analysis
 
