@@ -1,0 +1,209 @@
+---
+title: "Exploratory Data Analysis: Armed Conflict"
+format:
+  html:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Data and approach
+
+This report describes the Week 3 analytical dataset and the distribution of **current-year** armed conflict across its country-year observations. The final dataset retains only `armed_conflict_lagged`, which represents the previous year's conflict status within each country. Therefore, current-year conflict is reconstructed below from the raw conflict file using the same rule as `R/create_final_data.R`: a country-year is classified as conflict-affected if *any* source record has `best >= 25`. This reconstruction is used only for this EDA and does not alter the final dataset.
+
+The raw conflict file ends before the end of the analytical panel. Country-years beyond the raw file's coverage are classified as unavailable, rather than being treated as years without conflict.
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+library(knitr)
+
+final_path <- here("data", "processed", "final_data.csv")
+conflict_path <- here("data", "raw", "conflict.csv")
+
+if (!file.exists(final_path)) {
+  stop("Final dataset not found: ", final_path)
+}
+if (!file.exists(conflict_path)) {
+  stop("Raw conflict data not found: ", conflict_path)
+}
+
+final_data <- read_csv(final_path, show_col_types = FALSE)
+conflict_raw <- read_csv(conflict_path, show_col_types = FALSE)
+
+stopifnot(all(c("iso", "year", "armed_conflict_lagged") %in% names(final_data)))
+stopifnot(all(c("iso", "year", "best") %in% names(conflict_raw)))
+
+# Reconstruct current-year conflict from the raw conflict records.
+current_conflict <- conflict_raw |>
+  group_by(iso, year) |>
+  summarise(
+    armed_conflict = as.integer(any(best >= 25)),
+    .groups = "drop"
+  )
+
+# Determine the final year covered by the raw conflict file.
+raw_conflict_max_year <- max(conflict_raw$year, na.rm = TRUE)
+
+# Treat unmatched country-years as no conflict only within the
+# observed years of raw-conflict coverage. Later years remain NA.
+eda_data <- final_data |>
+  select(iso, year, armed_conflict_lagged) |>
+  left_join(current_conflict, by = c("iso", "year")) |>
+  mutate(
+    armed_conflict = if_else(
+      year <= raw_conflict_max_year,
+      coalesce(armed_conflict, 0L),
+      NA_integer_
+    )
+  )
+
+# Summarise only country-years with observed conflict-data coverage.
+conflict_counts <- eda_data |>
+  filter(!is.na(armed_conflict)) |>
+  count(armed_conflict, name = "country_years") |>
+  complete(
+    armed_conflict = 0:1,
+    fill = list(country_years = 0L)
+  ) |>
+  mutate(
+    conflict_status = factor(
+      armed_conflict,
+      levels = c(0, 1),
+      labels = c("No current-year conflict", "Current-year conflict")
+    )
+  )
+
+# Calculate annual totals only for years covered by the raw conflict file.
+annual_with_raw_coverage <- eda_data |>
+  filter(year <= raw_conflict_max_year) |>
+  group_by(year) |>
+  summarise(
+    conflict_affected_country_years = sum(armed_conflict),
+    .groups = "drop"
+  )
+
+covered_country_years <- sum(conflict_counts$country_years)
+conflict_affected_country_years <- conflict_counts |>
+  filter(armed_conflict == 1) |>
+  pull(country_years)
+
+no_conflict_country_years <- conflict_counts |>
+  filter(armed_conflict == 0) |>
+  pull(country_years)
+
+uncovered_country_years <- sum(is.na(eda_data$armed_conflict))
+```
+
+## Dataset structure and missing values
+
+The final dataset contains `r nrow(final_data)` country-year observations and `r ncol(final_data)` variables. It covers `r n_distinct(final_data$iso)` countries from `r min(final_data$year)` through `r max(final_data$year)`.
+
+```{r}
+#| label: dimensions-and-missingness
+kable(
+  tibble(
+    measure = c("Rows (country-years)", "Columns", "Countries", "Years"),
+    value = c(
+      nrow(final_data),
+      ncol(final_data),
+      n_distinct(final_data$iso),
+      paste(min(final_data$year), max(final_data$year), sep = "–")
+    )
+  ),
+  col.names = c("Dataset measure", "Value")
+)
+
+missing_values <- final_data |>
+  summarise(across(everything(), ~ sum(is.na(.x)))) |>
+  pivot_longer(
+    everything(),
+    names_to = "variable",
+    values_to = "missing_values"
+  )
+
+kable(missing_values, col.names = c("Variable", "Missing values"))
+```
+
+The event indicators (`earthquake` and `drought`) have no missing values. The lagged conflict variable has `r sum(is.na(final_data$armed_conflict_lagged))` missing values, corresponding to the first observed year for each country; this is expected after applying a one-year lag. Missingness in outcome and covariate variables should be considered when fitting models that include them.
+
+## Current-year armed-conflict distribution
+
+Current-year conflict is distinguished from `armed_conflict_lagged`: the counts and chart below use the reconstructed `armed_conflict` variable, not the lagged variable in the final dataset. The summary includes only country-years within the raw conflict file's coverage, through `r raw_conflict_max_year`.
+
+```{r}
+#| label: conflict-counts
+kable(
+  conflict_counts |>
+    select(conflict_status, country_years),
+  col.names = c("Current-year conflict status", "Country-years")
+)
+```
+
+Among the `r covered_country_years` country-years with raw-conflict coverage, `r conflict_affected_country_years` were conflict-affected (`r round(100 * conflict_affected_country_years / covered_country_years, 1)`%), while `r no_conflict_country_years` had no current-year conflict.
+
+There are also `r uncovered_country_years` country-year observations outside the raw conflict file's coverage. These are not included in the conflict percentages or the chart below because their current-year conflict status cannot be established from this file.
+
+```{r}
+#| label: conflict-bar-chart
+#| fig-cap: "Distribution of current-year armed conflict among country-years with raw-conflict data coverage."
+ggplot(
+  conflict_counts,
+  aes(x = conflict_status, y = country_years, fill = conflict_status)
+) +
+  geom_col(width = 0.65, show.legend = FALSE) +
+  geom_text(aes(label = country_years), vjust = -0.35) +
+  scale_fill_manual(
+    values = c(
+      "No current-year conflict" = "#B8C6D1",
+      "Current-year conflict" = "#B04A5A"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Number of country-years",
+    title = "Most covered country-years were not conflict-affected"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+## Armed conflict over time
+
+The line chart shows the number of conflict-affected country-years per year, restricted to years with raw-conflict data coverage. The final year displayed is `r raw_conflict_max_year`.
+
+```{r}
+#| label: conflict-over-time
+#| fig-cap: "Country-years affected by current-year armed conflict during years covered by the raw conflict file."
+ggplot(
+  annual_with_raw_coverage,
+  aes(x = year, y = conflict_affected_country_years)
+) +
+  geom_line(linewidth = 0.8, colour = "#B04A5A") +
+  geom_point(size = 2, colour = "#B04A5A") +
+  scale_x_continuous(
+    breaks = seq(
+      min(annual_with_raw_coverage$year),
+      max(annual_with_raw_coverage$year),
+      by = 2
+    )
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks()) +
+  labs(
+    x = "Year",
+    y = "Conflict-affected country-years",
+    title = "Current-year armed conflict by year",
+    subtitle = paste("Raw conflict data available through", raw_conflict_max_year)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+Among years with raw-conflict coverage, the annual total was highest in `r annual_with_raw_coverage |> slice_max(conflict_affected_country_years, n = 1, with_ties = FALSE) |> pull(year)` (`r annual_with_raw_coverage |> summarise(max(conflict_affected_country_years)) |> pull()` country-years) and lowest in `r annual_with_raw_coverage |> slice_min(conflict_affected_country_years, n = 1, with_ties = FALSE) |> pull(year)` (`r annual_with_raw_coverage |> summarise(min(conflict_affected_country_years)) |> pull()` country-years).
+
+The number of conflict-affected country-years was `r annual_with_raw_coverage |> filter(year == min(year)) |> pull(conflict_affected_country_years)` in `r min(annual_with_raw_coverage$year)` and `r annual_with_raw_coverage |> filter(year == 2010) |> pull(conflict_affected_country_years)` in 2010. From 2011 through `r raw_conflict_max_year`, the annual totals fluctuated between `r annual_with_raw_coverage |> filter(year >= 2011) |> summarise(min(conflict_affected_country_years)) |> pull()` and `r annual_with_raw_coverage |> filter(year >= 2011) |> summarise(max(conflict_affected_country_years)) |> pull()` country-years.
+
+These findings are descriptive and do not establish the causes of changes in conflict over time. The final dataset includes observations through 2019, but the raw conflict file contains no records for that year. Consequently, 2019 is excluded from the conflict distribution and time-series chart rather than being interpreted as a year with no conflict.

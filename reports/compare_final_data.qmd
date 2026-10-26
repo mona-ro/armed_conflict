@@ -1,0 +1,153 @@
+---
+title: "Comparison of Week 3 and Independently Reconstructed Final Data"
+format:
+  html:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false 
+---
+
+## Purpose
+
+This report compares the Week 3 final dataset with an independent reconstruction.
+The reconstruction is created from raw files by
+`R/create_final_data_agent.R`; it never reads `final_data.csv`.
+Run the reconstruction first, then render this document from the repository root.
+
+```{r}
+#| label: setup
+library(readr)
+library(dplyr)
+library(tibble)
+library(knitr)
+
+week3_path <- here::here("data", "processed", "final_data.csv")
+agent_path <- here::here("data", "processed", "final_data_agent.csv")
+if (!file.exists(week3_path)) {
+  stop("Week 3 dataset not found: ", week3_path)
+}
+if (!file.exists(agent_path)) {
+  stop("Independent dataset not found: ", agent_path,
+       ". Run R/create_final_data_agent.R from the repository root first.")
+}
+
+week3 <- read_csv(week3_path, show_col_types = FALSE)
+agent <- read_csv(agent_path, show_col_types = FALSE)
+key <- c("iso", "year")
+type_name <- function(x) paste(class(x), collapse = "/")
+same_value <- function(x, y) {
+  if (is.numeric(x) && is.numeric(y)) {
+    (is.na(x) & is.na(y)) | (!is.na(x) & !is.na(y) & abs(x - y) <= 1e-12)
+  } else {
+    (is.na(x) & is.na(y)) | (!is.na(x) & !is.na(y) & x == y)
+  }
+}
+```
+
+## Dimensions, columns, and types
+
+```{r}
+dimensions <- tibble(
+  dataset = c("Week 3", "Independent reconstruction"),
+  rows = c(nrow(week3), nrow(agent)),
+  columns = c(ncol(week3), ncol(agent))
+)
+kable(dimensions)
+
+schema <- full_join(
+  tibble(column = names(week3), week3_type = vapply(week3, type_name, character(1))),
+  tibble(column = names(agent), agent_type = vapply(agent, type_name, character(1))),
+  by = "column"
+) |> mutate(match = !is.na(week3_type) & !is.na(agent_type) & week3_type == agent_type)
+kable(schema)
+cat("Same column order:", identical(names(week3), names(agent)), "\n")
+```
+
+Types are assessed after reading both CSVs with the same parser, so they describe
+the deliverable datasets rather than incidental in-memory types during creation.
+
+## Missing values and key alignment
+
+```{r}
+missingness <- full_join(
+  tibble(column = names(week3), week3_missing = vapply(week3, function(x) sum(is.na(x)), integer(1))),
+  tibble(column = names(agent), agent_missing = vapply(agent, function(x) sum(is.na(x)), integer(1))),
+  by = "column"
+) |> mutate(match = week3_missing == agent_missing)
+kable(missingness)
+
+week3_keys <- distinct(week3, across(all_of(key)))
+agent_keys <- distinct(agent, across(all_of(key)))
+only_week3 <- anti_join(week3_keys, agent_keys, by = key)
+only_agent <- anti_join(agent_keys, week3_keys, by = key)
+alignment <- tibble(
+  check = c("Keys only in Week 3", "Keys only in reconstruction",
+            "Duplicate Week 3 keys", "Duplicate reconstruction keys",
+            "Same key order after sorting"),
+  result = c(nrow(only_week3), nrow(only_agent),
+             nrow(week3) - nrow(week3_keys), nrow(agent) - nrow(agent_keys),
+             identical(arrange(week3, across(all_of(key)))[key],
+                       arrange(agent, across(all_of(key)))[key]))
+)
+kable(alignment)
+```
+
+Rows are aligned by `iso` and `year` rather than their file positions.
+Only then are values compared. Numeric values use a tolerance of (10^{-12})
+to avoid classifying CSV floating-point printing as a substantive mismatch.
+
+## Row-level values
+
+```{r}
+common <- intersect(names(week3), names(agent))
+variables <- setdiff(common, key)
+w <- arrange(week3, across(all_of(key)))
+a <- arrange(agent, across(all_of(key)))
+keys_align <- nrow(only_week3) == 0 && nrow(only_agent) == 0 &&
+  nrow(week3) == nrow(week3_keys) && nrow(agent) == nrow(agent_keys)
+columns_align <- setequal(names(week3), names(agent))
+
+if (!keys_align || !columns_align) {
+  variable_differences <- tibble(variable = character(), differing_observations = integer())
+  details <- tibble()
+  cat("Row-level comparison was not run because keys or columns do not align.\n")
+} else {
+  variable_differences <- bind_rows(lapply(variables, function(v) {
+    tibble(variable = v, differing_observations = sum(!same_value(w[[v]], a[[v]])))
+  }))
+  kable(filter(variable_differences, differing_observations > 0))
+
+  details <- bind_rows(lapply(variables, function(v) {
+    equal <- same_value(w[[v]], a[[v]])
+    tibble(iso = w$iso[!equal], year = w$year[!equal], variable = v,
+           week3_value = as.character(w[[v]][!equal]),
+           agent_value = as.character(a[[v]][!equal]))
+  }))
+  if (nrow(details) == 0) {
+    cat("No row-level differences were found in common variables.\n")
+  } else {
+    kable(details)
+  }
+}
+```
+
+## Interpretation and raw-data logic
+
+```{r}
+all_schema <- identical(names(week3), names(agent)) && all(schema$match)
+all_missing <- all(missingness$match)
+all_keys <- nrow(only_week3) == 0 && nrow(only_agent) == 0 &&
+  nrow(week3) == nrow(week3_keys) && nrow(agent) == nrow(agent_keys)
+all_values <- sum(variable_differences$differing_observations) == 0
+
+if (all_schema && all_missing && all_keys && all_values) {
+  cat("The datasets agree on dimensions, schema, missingness, country-year keys, and all values. No correction is supported by this evidence.\n")
+} else {
+  cat("The datasets do not fully agree. The tables identify every differing variable and country-year. Inspect those raw records before changing the Week 3 file.\n")
+}
+cat("Reconstruction logic checked: mortality X2000--X2019 columns create the panel; qualifying disasters are Earthquake/Drought in 2000--2019; conflict is any best >= 25; absent event indicators become zero; conflict is lagged within ISO.\n")
+```
+
+This report makes no changes to the Week 3 source script or final dataset.

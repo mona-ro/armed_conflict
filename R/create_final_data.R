@@ -1,3 +1,8 @@
+
+# ============================================================
+# Create Final Armed Conflict Dataset
+# ============================================================
+
 library(tidyverse)
 library(janitor)
 library(countrycode)
@@ -8,14 +13,27 @@ library(here)
 # 1. WORLD BANK MORTALITY DATA
 # ============================================================
 
-maternal <- read_csv("../data/raw/maternal_mortality.csv")
-infant <- read_csv("../data/raw/infant_mortality.csv")
-neonatal <- read_csv("../data/raw/neonatal_mortality.csv")
-under5 <- read_csv("../data/raw/under5_mortality.csv")
+maternal <- read_csv(
+  here("data", "raw", "maternal_mortality.csv")
+)
+
+infant <- read_csv(
+  here("data", "raw", "infant_mortality.csv")
+)
+
+neonatal <- read_csv(
+  here("data", "raw", "neonatal_mortality.csv")
+)
+
+under5 <- read_csv(
+  here("data", "raw", "under5_mortality.csv")
+)
 
 
-prepare_world_bank_mortality_data <- function(data, mortality_variable_name) {
-  
+prepare_world_bank_mortality_data <- function(
+    data,
+    mortality_variable_name
+) {
   data |>
     pivot_longer(
       cols = starts_with("X"),
@@ -24,7 +42,11 @@ prepare_world_bank_mortality_data <- function(data, mortality_variable_name) {
       values_to = mortality_variable_name
     ) |>
     mutate(year = as.numeric(year)) |>
-    select(iso, year, all_of(mortality_variable_name))
+    select(
+      iso,
+      year,
+      all_of(mortality_variable_name)
+    )
 }
 
 
@@ -59,26 +81,24 @@ mortality_data <- maternal_mortality |>
 # 2. DISASTER DATA
 # ============================================================
 
-disaster_data <- read_csv("../data/raw/disaster.csv")
-
-disaster_data <- disaster_data |>
-  clean_names()
-
-disaster_data <- disaster_data |>
+disaster_data <- read_csv(
+  here("data", "raw", "disaster.csv")
+) |>
+  clean_names() |>
   filter(
     year >= 2000,
     year <= 2019,
     disaster_type %in% c("Earthquake", "Drought")
-  )
-
-disaster_data <- disaster_data |>
-  select(year, iso, disaster_type)
-
-disaster_data <- disaster_data |>
+  ) |>
+  select(year, iso, disaster_type) |>
   group_by(year, iso) |>
   summarise(
-    earthquake = as.integer(any(disaster_type == "Earthquake")),
-    drought = as.integer(any(disaster_type == "Drought")),
+    earthquake = as.integer(
+      any(disaster_type == "Earthquake")
+    ),
+    drought = as.integer(
+      any(disaster_type == "Drought")
+    ),
     .groups = "drop"
   )
 
@@ -87,14 +107,12 @@ disaster_data <- disaster_data |>
 # 3. CONFLICT DATA
 # ============================================================
 
-conflict_data <- read_csv("../data/raw/conflict.csv")
-
-conflict_data <- conflict_data |>
+conflict_data <- read_csv(
+  here("data", "raw", "conflict.csv")
+) |>
   mutate(
     armed_conflict = as.integer(best >= 25)
-  )
-
-conflict_data <- conflict_data |>
+  ) |>
   group_by(iso, year) |>
   summarise(
     armed_conflict = max(armed_conflict),
@@ -106,7 +124,9 @@ conflict_data <- conflict_data |>
 # 4. COVARIATES
 # ============================================================
 
-covariates_data <- read_csv("../data/raw/covariates.csv")
+covariates_data <- read_csv(
+  here("data", "raw", "covariates.csv")
+)
 
 
 # ============================================================
@@ -122,12 +142,13 @@ final_data <- mortality_data |>
     conflict_data,
     by = c("iso", "year")
   ) |>
-
   left_join(
     covariates_data,
     by = c("iso", "year")
   )
 
+
+# Replace missing event indicators with zero
 final_data <- final_data |>
   mutate(
     earthquake = replace_na(earthquake, 0L),
@@ -135,15 +156,15 @@ final_data <- final_data |>
     armed_conflict = replace_na(armed_conflict, 0L)
   )
 
+
+# Create the one-year lagged conflict variable
 final_data <- final_data |>
   arrange(iso, year) |>
   group_by(iso) |>
   mutate(
     armed_conflict_lagged = lag(armed_conflict)
   ) |>
-  ungroup()
-
-final_data <- final_data |>
+  ungroup() |>
   select(-armed_conflict)
 
 
@@ -151,11 +172,9 @@ final_data <- final_data |>
 # 6. CHECK FINAL DATASET
 # ============================================================
 
-names(final_data)
-
-dim(final_data)
-
-head(final_data)
+print(names(final_data))
+print(dim(final_data))
+print(head(final_data))
 
 
 # ============================================================
@@ -164,4 +183,7 @@ head(final_data)
 
 write_csv(
   final_data,
-  "data/processed/final_data.csv")
+  here("data", "processed", "final_data.csv")
+)
+
+message("Final dataset saved successfully.")
