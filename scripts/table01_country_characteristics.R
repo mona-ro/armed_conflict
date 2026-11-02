@@ -195,6 +195,10 @@ table_one <- table1(
 
 # Convert Table 1 into a flextable object
 table_one_flex <- table1::t1flex(table_one)
+table_one_flex$header$dataset[] <- lapply(
+  table_one_flex$header$dataset,
+  function(column) sub("^TRUE\\n", "Overall\\n", column)
+)
 
 table_one_flex <- flextable::autofit(table_one_flex)
 
