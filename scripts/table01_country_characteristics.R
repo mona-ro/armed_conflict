@@ -185,7 +185,7 @@ table_one <- table1(
     rainfall_1000 |
     armed_conflict_group,
   data = table_data,
-  overall = TRUE,
+  overall = "Overall",
   caption = "Table 1. Country Characteristics by Armed Conflict Status in 2001"
 )
 
@@ -195,10 +195,6 @@ table_one <- table1(
 
 # Convert Table 1 into a flextable object
 table_one_flex <- table1::t1flex(table_one)
-table_one_flex$header$dataset[] <- lapply(
-  table_one_flex$header$dataset,
-  function(column) sub("^TRUE\\n", "Overall\\n", column)
-)
 
 table_one_flex <- flextable::autofit(table_one_flex)
 
