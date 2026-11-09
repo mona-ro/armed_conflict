@@ -6,21 +6,13 @@ This repository contains the CHL5233H: Statistical Programming and Computation i
 
 - `data/raw/` — Original mortality, conflict, disaster, and covariate data
 - `data/processed/` — Final merged analytical dataset
-- `R/` — R scripts used to prepare the analytical dataset
-- `reports/` — Exploratory data analysis and dataset comparison reports, including Quarto source files and rendered HTML reports
+- `R/` — Data preparation scripts
+- `scripts/` — Descriptive analysis, visualizations, and regression scripts
+- `reports/` — Exploratory data analysis and dataset comparison reports
+- `output/` — Generated tables and figures
 
 ## Analysis
 
-The analysis combines country-year data on:
+The analysis uses country-year data from 186 countries between 2000 and 2019 to examine the relationship between armed conflict and maternal, infant, neonatal, and under-5 mortality.
 
-- Maternal mortality
-- Infant mortality
-- Neonatal mortality
-- Under-5 mortality
-- Armed conflict
-- Earthquakes and droughts
-- Economic, demographic, and environmental covariates
-
-World Bank mortality data are converted from wide to long format. Disaster data are used to create country-year indicators for earthquakes and droughts. Armed conflict is defined using a threshold of at least 25 battle-related deaths and is lagged by one year.
-
-The final analytical dataset contains 3,720 country-year observations covering 186 countries from 2000 to 2019. The raw conflict file ends in 2018, so 2019 is excluded from the EDA's current-year conflict summaries because conflict status for that year cannot be established from the available source data.
+Armed conflict is defined as at least 25 battle-related deaths and lagged by one year. The analysis includes descriptive statistics, mortality trend visualizations, and four two-way fixed-effects panel regression models using `plm()`. GDP per capita is log-transformed, and models adjust for additional economic, demographic, and environmental covariates.
