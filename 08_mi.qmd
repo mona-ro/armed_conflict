@@ -1,0 +1,346 @@
+---
+title: "Multiple imputation for handling missing data"
+format: 
+  revealjs:
+    slide-number: true
+    show-slide-number: all
+editor: source
+embed-resources: true
+---
+
+```{r setup}
+#| echo: true
+#| message: false
+#| include: false
+  
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(
+  #fig.width=9, fig.height=3.5, fig.retina=3,
+  fig.retina = 3,
+  #out.height = "100%",
+  cache = FALSE,
+  echo = TRUE,
+  message = FALSE, 
+  warning = FALSE,
+  hiline = TRUE
+)
+library(here)
+library(tidyverse)
+library(knitr)
+library(flextable)
+library(texreg)
+library(sjPlot)
+library(bp)
+library(plm)
+library(mice)
+library(naniar)
+```
+
+## Download `mice` package
+
+```{r}
+#| eval: false
+install.packages("mice")
+```
+
+
+## Missing data {.smaller}
+
+- Investigating the presence/absence of missing data and their pattern should be conducted as part of EDA
+  + What are some variables that are missing in the armed conflict paper?
+  + How did you handle missing data when creating table of country characteristics?
+  
+```{r}
+#| echo: FALSE
+finaldata <- read.csv("data/processed/final_data.csv", header = TRUE)
+```
+
+```{r}
+summary(finaldata)
+```
+
+  
+## Visualize missing data
+```{r}
+#| echo: false
+finaldata <- finaldata |>
+  mutate(loggdp = log(gdp_1000)) |>
+  select(-gdp_1000)
+```
+
+
+```{r}
+library(naniar)
+finaldata |>
+  arrange(year, iso) |>
+  dplyr::select(-iso, -year) |>
+  vis_miss()
+```
+
+
+## Investigation
+
+Which country is missing child mortality data?
+```{r}
+finaldata |> dplyr::filter(is.na(infant_mortality))
+```
+## Investigation
+
+Which country is missing population density?
+```{r}
+finaldata |> dplyr::filter(is.na(pop_dens))
+```
+
+## Complete case analysis {.smaller}
+
+How many countries do we have in the data?
+```{r}
+length(unique(finaldata$iso))
+```
+How many countries do we have if we perform complete case analysis on the outcome maternal mortality?
+```{r}
+matmordata <- finaldata |> dplyr::select(-infant_mortality, -under5_mortality, -neonatal_mortality)
+completedata <- matmordata[complete.cases(matmordata),]
+length(unique(completedata$iso))
+```
+How many countries do we have if we perform complete case analysis on the outcome child mortality?
+```{r}
+childmordata <- finaldata |> dplyr::select(-maternal_mortality)
+completedata <- childmordata[complete.cases(childmordata),]
+length(unique(completedata$iso))
+```
+How many countries are listed in the original armed conflict paper?
+
+
+## Regression models of interest
+
+We fit the following four models last week
+```{r}
+preds <- as.formula(" ~ armed_conflict + loggdp + oecd + pop_dens + urban +
+              age_dep + male_edu + temp + rainfall_1000 + earthquake + drought")
+
+matmormod <- plm(update.formula(preds, maternal_mortality ~ .), index = c("iso", "year"), effect = "twoways",
+                 model = "within", data = finaldata)
+un5mormod <- plm(update.formula(preds, under5_mortality ~ .), index = c("iso", "year"), effect = "twoways",
+                 model = "within", data = finaldata)
+infmormod <- plm(update.formula(preds, infant_mortality ~ .), index = c("iso", "year"), effect = "twoways",
+                 model = "within", data = finaldata)
+neomormod <- plm(update.formula(preds, neonatal_mortality ~ .), index = c("iso", "year"), effect = "twoways",
+                 model = "within", data = finaldata)
+```
+
+## Considerations before running MI {.smaller}
+
+- Are any variables MNAR? 
+- If all variables are MCAR, do we need to perform MI?
+- Variables are repeatedly measured over time. Which variables are level 1? Level 2?
+- GDP was log transformed. Do we use GDP in the imputation model then transform or use log(GDP) in the imputation model?
+- Can we impute the outcome variables?
+  + MI doesn't know which variables are outcomes or predictors
+  + There is an ongoing debate in the literature about whether to use imputed outcome variable in the analysis
+  + One approach is "multiple imputation then deletion" (MID) where the outcome variable is included in the imputation model but outcome values that were initially missing are omitted in the analysis
+  + MID requires additional coding... could use an R package **(\*\*Hint Hint\*\*)**
+  + Additional readings: [Paper 1](https://www.tandfonline.com/doi/full/10.1080/00223891.2018.1530680), [Paper 2](https://doi.org/10.1016/j.cjca.2020.11.010)
+
+
+
+## Apply MI 
+
+- Need to convert `iso` to numeric
+```{r}
+midata <- finaldata |>
+  mutate(iso_num = as.numeric(as.factor(finaldata$iso))) |>
+  select(-iso)
+```
+
+- Dry run to get `meth` and `pred`
+```{r}
+mice0  <- mice(midata, seed = 100, m = 5, maxit = 0, print = F)
+```
+- Edit `meth` and `pred`
+```{r}
+meth <- mice0$method
+meth[c("urban", "male_edu", "temp", "rainfall_1000", "loggdp", "pop_dens",
+       "maternal_mortality", "infant_mortality", "neonatal_mortality", "under5_mortality")] <- "2l.lmer"
+
+pred <- mice0$predictorMatrix
+pred[c("urban", "male_edu", "temp", "rainfall_1000", "loggdp", "pop_dens",
+       "maternal_mortality", "infant_mortality", "neonatal_mortality", "under5_mortality"), "iso_num"] <- -2
+```
+
+
+## Perform MI with `mice` package
+
+- First, let's quickly perform MI with `m=2` imputations
+```{r}
+mice.multi.out  <- mice(midata, seed = 100, m = 10, maxit = 20,
+                        method = meth,
+                        predictorMatrix = pred)
+
+```
+## Perform MI with `mice` package
+
+- Check for convergence
+```{r}
+plot(mice.multi.out)
+```
+
+## Saving MI output
+
+- It's a good idea to save the MI output as an R object
+
+```{r}
+#| eval: false
+
+save(mice.multi.out, file = "output//mice_out.RData")
+```
+
+
+
+## Fit model 
+
+- Fit the four regression models on the 2 imputed data sets using the `with()` function
+  + Unfortunately `plm()` cannot be used within `with()` so need to use `lm()`
+  + But, can we use `plm()` on multiply imputed data? It would be nice to have a package that does this... **(\*\*Hint Hint\*\*)**
+  
+```{r}
+# Maternal mortality
+fit.mi.matmor <- with(mice.multi.out, 
+  lm(maternal_mortality ~ -1 + armed_conflict_lagged + loggdp + oecd + pop_dens + urban + 
+       age_dep + male_edu + temp + rainfall_1000 + earthquake + drought + 
+       as.factor(iso_num) + as.factor(year)))
+
+# Under-5 mortality
+fit.mi.un5 <- with(mice.multi.out, 
+  lm(under5_mortality ~ -1 + armed_conflict_lagged + loggdp + oecd + pop_dens + urban + 
+       age_dep + male_edu + temp + rainfall_1000 + earthquake + drought + 
+       as.factor(iso_num) + as.factor(year)))
+
+# Infant mortality
+fit.mi.inf <- with(mice.multi.out, 
+  lm(infant_mortality ~ -1 + armed_conflict_lagged + loggdp + oecd + pop_dens + urban + 
+       age_dep + male_edu + temp + rainfall_1000 + earthquake + drought + 
+       as.factor(iso_num) + as.factor(year)))
+
+# Neonatal mortality
+fit.mi.neo <- with(mice.multi.out, 
+  lm(neonatal_mortality ~ -1 + armed_conflict_lagged + loggdp + oecd + pop_dens + urban + 
+       age_dep + male_edu + temp + rainfall_1000 + earthquake + drought + 
+       as.factor(iso_num) + as.factor(year)))
+```
+
+## Summarize results 
+
+- Use the `pool()` function to apply Rubin's rules to summarize the regression estimates and standard errors
+```{r}
+out.mi.matmor <- pool(fit.mi.matmor)
+out.mi.un5 <- pool(fit.mi.un5)
+out.mi.inf <- pool(fit.mi.inf)
+out.mi.neo <- pool(fit.mi.neo)
+```
+
+- `summary()` function will produce a table with estimates, standard errors, etc. 
+
+```{r}
+summary(out.mi.matmor)
+summary(out.mi.un5)
+summary(out.mi.inf)
+summary(out.mi.neo)
+```
+
+```{r}
+# --------------------------------------------------
+# Question 3: Compare complete-case and MI results
+# --------------------------------------------------
+
+# 1. Define the predictors to include (exclude fixed effects)
+predictors <- c(
+  "armed_conflict_lagged", "loggdp", "oecd", "pop_dens",
+  "urban", "age_dep", "male_edu", "temp", "rainfall_1000",
+  "earthquake", "drought"
+)
+
+# 2. Extract complete-case regression results
+extract_cc <- function(model, outcome) {
+
+  estimates <- coef(model)
+  intervals <- confint(model)
+
+  tibble(
+    outcome = outcome,
+    term = names(estimates),
+    estimate = as.numeric(estimates),
+    lower = intervals[names(estimates), 1],
+    upper = intervals[names(estimates), 2]
+  )
+}
+
+cc_results <- bind_rows(
+  extract_cc(matmormod, "Maternal mortality"),
+  extract_cc(un5mormod, "Under-5 mortality"),
+  extract_cc(infmormod, "Infant mortality"),
+  extract_cc(neomormod, "Neonatal mortality")
+) |>
+  filter(term %in% predictors)
+
+# 3. Extract pooled multiple-imputation results
+extract_mi <- function(model, outcome) {
+
+  results <- summary(model, conf.int = TRUE)
+
+  tibble(
+    outcome = outcome,
+    term = results$term,
+    estimate = results$estimate,
+    lower = results$`2.5 %`,
+    upper = results$`97.5 %`
+  )
+}
+
+mi_results <- bind_rows(
+  extract_mi(out.mi.matmor, "Maternal mortality"),
+  extract_mi(out.mi.un5, "Under-5 mortality"),
+  extract_mi(out.mi.inf, "Infant mortality"),
+  extract_mi(out.mi.neo, "Neonatal mortality")
+) |>
+  filter(term %in% predictors)
+
+# 4. Format complete-case results
+cc_table <- cc_results |>
+  mutate(
+    CC = sprintf("%.3f (%.3f, %.3f)", estimate, lower, upper)
+  ) |>
+  select(outcome, term, CC)
+
+# 5. Format multiple-imputation results
+mi_table <- mi_results |>
+  mutate(
+    MI = sprintf("%.3f (%.3f, %.3f)", estimate, lower, upper)
+  ) |>
+  select(outcome, term, MI)
+
+# 6. Combine both sets of results
+comparison_table <- full_join(
+  cc_table,
+  mi_table,
+  by = c("outcome", "term")
+)
+
+# 7. Display the final table
+comparison_table
+
+# 8. Save the table as a CSV file
+write.csv(
+  comparison_table,
+  "output/CC_vs_MI_comparison.csv",
+  row.names = FALSE
+)
+```
+
+## In-class assignment
+
+1. Increase the **number of imputations** to 10 and **max iteration** to 20 and rerun multiple imputation
+2. Follow the steps to fit the **four regression models** using the same MI data
+3. Create a **table** that shows estimated coefficients and 95% CI from CC analyses and MI analyses side by side (do not include the estimates for the fixed effects in the table)
+4. As always, **commit+push** to your GitHub repo!
+5. Submit your table to Week 9 Assignment
